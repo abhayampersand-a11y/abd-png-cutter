@@ -1,0 +1,668 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sprite Cutter</title>
+<meta name="description" content="Drop a sprite sheet or UI kit and get every piece auto-cropped in one zip.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>✂️</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&display=swap" rel="stylesheet">
+<script src="/jszip.min.js"></script>
+<style>
+:root{
+  --paper:#E6EBE7; --panel:#F6F8F6; --ink:#14201B; --muted:#56675F; --line:#C6D0CA;
+  --mat:#1D5646; --mat-edge:#174637; --grid:rgba(255,255,255,.07); --grid-strong:rgba(255,255,255,.15);
+  --blade:#FFC21A; --blade-ink:#2B2200; --danger:#C8412A;
+  --font:"Bricolage Grotesque", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#0E1613; --panel:#15201C; --ink:#E4ECE7; --muted:#8FA298; --line:#2A3A33;
+    --mat:#153F33; --mat-edge:#0F2F26; --danger:#F0775F;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#0E1613; --panel:#15201C; --ink:#E4ECE7; --muted:#8FA298; --line:#2A3A33;
+  --mat:#153F33; --mat-edge:#0F2F26; --danger:#F0775F;
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{margin:0}
+body{background:var(--paper);color:var(--ink);font-family:var(--font);font-size:15px;line-height:1.45;-webkit-font-smoothing:antialiased}
+button,input,select{font:inherit;color:inherit}
+:focus-visible{outline:3px solid var(--blade);outline-offset:2px}
+.wrap{max-width:1400px;margin:0 auto;padding:20px clamp(12px,3vw,32px) 48px}
+
+header{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:18px}
+h1{margin:0;font-size:clamp(34px,5vw,56px);font-weight:800;letter-spacing:-.035em;line-height:.95}
+h1 .cut{display:inline-block;border:2px dashed var(--blade);padding:0 .12em;margin-left:.08em;border-radius:4px;background:color-mix(in srgb,var(--blade) 14%,transparent)}
+.lede{margin:8px 0 0;color:var(--muted);max-width:52ch}
+.actions{display:flex;gap:10px;flex-wrap:wrap}
+.btn{border:1.5px solid var(--line);background:var(--panel);padding:10px 16px;border-radius:10px;cursor:pointer;font-weight:600;display:inline-flex;align-items:center;gap:8px;white-space:nowrap}
+.btn:hover{border-color:var(--ink)}
+.btn.primary{background:var(--blade);color:var(--blade-ink);border-color:var(--blade);font-weight:800}
+.btn.primary:hover{filter:brightness(1.05);border-color:var(--blade-ink)}
+.btn:disabled{opacity:.45;cursor:not-allowed;filter:none}
+.btn.small{padding:6px 11px;font-size:13px;border-radius:8px}
+.btn.danger{color:var(--danger)}
+
+.main{display:grid;grid-template-columns:minmax(0,1fr) 290px;gap:18px;align-items:start}
+@media (max-width:920px){.main{grid-template-columns:1fr}}
+
+.mat{position:relative;border-radius:14px;background-color:var(--mat);
+  background-image:linear-gradient(var(--grid-strong) 1px,transparent 1px),linear-gradient(90deg,var(--grid-strong) 1px,transparent 1px),linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:100px 100px,100px 100px,20px 20px,20px 20px;background-position:-1px -1px;
+  box-shadow:inset 0 0 0 1px var(--mat-edge);min-height:420px;display:flex;align-items:center;justify-content:center;padding:16px;overflow:hidden}
+.mat.drag{box-shadow:inset 0 0 0 3px var(--blade)}
+#view{display:none;touch-action:none;cursor:crosshair;max-width:100%}
+.mat.has-img #view{display:block}
+.mat.has-img{min-height:0;padding-bottom:34px}
+.mat.has-img .empty{display:none}
+.empty{text-align:center;color:#EAF3EE;max-width:36ch}
+.empty .big{font-size:clamp(22px,3vw,30px);font-weight:800;letter-spacing:-.02em;line-height:1.1;margin-bottom:10px}
+.empty p{margin:0 0 18px;color:#B9D1C6}
+.hint{position:absolute;left:14px;bottom:10px;font-size:12.5px;color:#B9D1C6;pointer-events:none}
+.mat:not(.has-img) .hint{display:none}
+.busy{position:absolute;inset:0;display:none;align-items:center;justify-content:center;background:rgba(10,30,24,.45);color:#fff;font-weight:600}
+.busy.on{display:flex}
+
+aside{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px}
+aside h2{font-size:17px;margin:0 0 12px;letter-spacing:-.01em}
+.field{margin-bottom:16px}
+.field > label,.field .lab{display:flex;justify-content:space-between;align-items:baseline;font-weight:600;font-size:14px;margin-bottom:6px}
+.field output{font-variant-numeric:tabular-nums;color:var(--muted);font-weight:400}
+.field small{display:block;color:var(--muted);font-size:12.5px;margin-top:4px;line-height:1.35}
+input[type=range]{width:100%;accent-color:var(--blade)}
+.seg{display:grid;grid-template-columns:repeat(3,1fr);border:1.5px solid var(--line);border-radius:10px;overflow:hidden}
+.seg label{text-align:center;padding:7px 4px;font-size:13px;cursor:pointer;font-weight:600;border-right:1px solid var(--line)}
+.seg label:last-child{border-right:0}
+.seg input{position:absolute;opacity:0;pointer-events:none}
+.seg label:has(input:checked){background:var(--ink);color:var(--paper)}
+.seg label:has(input:focus-visible){outline:3px solid var(--blade);outline-offset:-3px}
+.colorrow{display:flex;align-items:center;gap:8px;margin-top:8px;font-size:13px;color:var(--muted)}
+.colorrow input{width:36px;height:28px;border:1px solid var(--line);border-radius:6px;padding:0;background:none}
+.check{display:flex;gap:9px;align-items:flex-start;font-size:14px;margin-bottom:10px;cursor:pointer}
+.check input{margin-top:3px;accent-color:var(--blade);width:16px;height:16px;flex:none}
+.check span small{display:block;color:var(--muted);font-size:12.5px}
+.text,select{width:100%;padding:8px 10px;border:1.5px solid var(--line);border-radius:8px;background:var(--paper)}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+hr{border:0;border-top:1px solid var(--line);margin:4px 0 16px}
+
+.pieces-head{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;margin:28px 0 12px}
+.pieces-head h2{margin:0;font-size:24px;letter-spacing:-.02em}
+.pieces-head h2 span{color:var(--muted);font-weight:400}
+.selbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:14px}
+.selbar[hidden]{display:none}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}
+.card{background:var(--panel);border:1.5px solid var(--line);border-radius:12px;padding:8px;display:flex;flex-direction:column;gap:6px}
+.card.sel{border-color:var(--blade);box-shadow:0 0 0 2px var(--blade)}
+.thumb{aspect-ratio:1;border-radius:8px;display:flex;align-items:center;justify-content:center;cursor:pointer;border:0;padding:6px;
+  background:conic-gradient(#d9dedb 25%,#f2f4f3 0 50%,#d9dedb 0 75%,#f2f4f3 0) 0 0/14px 14px;position:relative}
+.thumb{overflow:hidden}
+.thumb img{width:100%;height:100%;object-fit:contain}
+.thumb .num{position:absolute;top:5px;left:5px;background:var(--blade);color:var(--blade-ink);font-size:11px;font-weight:800;padding:1px 6px;border-radius:5px;font-variant-numeric:tabular-nums}
+.card .name{width:100%;border:1px solid transparent;background:transparent;padding:3px 5px;border-radius:6px;font-weight:600;font-size:13.5px}
+.card .name:hover,.card .name:focus{border-color:var(--line);background:var(--paper)}
+.card .meta{display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--muted);padding:0 5px;font-variant-numeric:tabular-nums}
+.card .meta button{border:0;background:none;padding:2px 4px;cursor:pointer;color:var(--ink);font-weight:600;font-size:12px;text-decoration:underline;text-underline-offset:2px}
+.nopieces{color:var(--muted);padding:24px 0}
+
+.toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%) translateY(20px);background:var(--ink);color:var(--paper);padding:10px 16px;border-radius:10px;font-weight:600;opacity:0;transition:.2s;pointer-events:none;z-index:10;max-width:90vw}
+.toast.on{opacity:1;transform:translateX(-50%)}
+@media (prefers-reduced-motion:reduce){.toast{transition:none}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Sprite <span class="cut">Cutter</span></h1>
+      <p class="lede">Drop a sprite sheet or UI kit. Every piece is found, cropped, and packed into one zip.</p>
+    </div>
+    <div class="actions">
+      <button class="btn" id="pickBtn" type="button">Choose image</button>
+      <button class="btn primary" id="zipBtn" type="button" disabled>Download ZIP</button>
+    </div>
+  </header>
+
+  <div class="main">
+    <section>
+      <div class="mat" id="mat">
+        <div class="empty">
+          <div class="big">Drop your sprite sheet here</div>
+          <p>PNG with transparency works best. White or solid backgrounds work too. You can also paste with Ctrl+V.</p>
+          <button class="btn primary" id="pickBtn2" type="button">Choose image</button>
+        </div>
+        <canvas id="view" aria-label="Sprite sheet with detected pieces outlined"></canvas>
+        <div class="hint">Click a box to select it. Drag on empty space to draw your own box.</div>
+        <div class="busy" id="busy">Cutting…</div>
+      </div>
+    </section>
+
+    <aside>
+      <h2>Cut settings</h2>
+      <div class="field">
+        <div class="lab">Background</div>
+        <div class="seg" role="radiogroup" aria-label="Background type">
+          <label><input type="radio" name="bgmode" value="auto" checked>Auto</label>
+          <label><input type="radio" name="bgmode" value="alpha">Transparent</label>
+          <label><input type="radio" name="bgmode" value="color">Solid</label>
+        </div>
+        <div class="colorrow" id="colorRow" hidden>
+          <input type="color" id="bgColor" value="#ffffff" aria-label="Background color">
+          <span id="bgNote">Detected background color</span>
+        </div>
+      </div>
+
+      <div class="field" id="alphaField">
+        <label for="alpha">Edge strictness <output id="alphaOut">128</output></label>
+        <input type="range" id="alpha" min="1" max="254" value="128">
+        <small>Higher ignores soft glows and shadows, so pieces that only touch by glow get separated.</small>
+      </div>
+      <div class="field" id="tolField" hidden>
+        <label for="tol">Color tolerance <output id="tolOut">32</output></label>
+        <input type="range" id="tol" min="0" max="150" value="32">
+        <small>How close to the background color a pixel must be to count as empty.</small>
+      </div>
+      <div class="field">
+        <label for="gap">Join gap <output id="gapOut">1 px</output></label>
+        <input type="range" id="gap" min="0" max="40" value="1">
+        <small>Parts closer than this become one piece. Raise it if a sprite comes out in bits.</small>
+      </div>
+      <div class="field">
+        <label for="min">Ignore smaller than <output id="minOut">8 px</output></label>
+        <input type="range" id="min" min="1" max="120" value="8">
+      </div>
+      <div class="field">
+        <label for="pad">Padding <output id="padOut">2 px</output></label>
+        <input type="range" id="pad" min="0" max="32" value="2">
+      </div>
+      <hr>
+      <label class="check"><input type="checkbox" id="absorb" checked><span>Keep pieces inside a bigger piece together<small>A badge sitting on an icon stays with the icon.</small></span></label>
+      <label class="check"><input type="checkbox" id="isolate" checked><span>Hide neighbors in the crop<small>Removes bits of nearby sprites that fall inside a box.</small></span></label>
+      <label class="check" id="removeBgRow" hidden><input type="checkbox" id="removeBg" checked><span>Make background transparent</span></label>
+      <hr>
+      <div class="row2">
+        <div class="field">
+          <label for="prefix">Name prefix</label>
+          <input class="text" id="prefix" value="sprite" spellcheck="false">
+        </div>
+        <div class="field">
+          <label for="format">Format</label>
+          <select id="format"><option value="png">PNG</option><option value="webp">WebP</option></select>
+        </div>
+      </div>
+      <small style="color:var(--muted);font-size:12.5px">Changing strictness, gap, or size re-cuts the sheet and resets manual edits.</small>
+    </aside>
+  </div>
+
+  <div class="pieces-head">
+    <h2>Pieces <span id="count"></span></h2>
+    <div class="selbar" id="selbar" hidden>
+      <span id="selCount"></span>
+      <button class="btn small" id="mergeBtn" type="button">Merge</button>
+      <button class="btn small danger" id="delBtn" type="button">Delete</button>
+      <button class="btn small" id="clearSel" type="button">Clear selection</button>
+    </div>
+  </div>
+  <div class="grid" id="grid"></div>
+  <p class="nopieces" id="nopieces">Cut pieces show up here.</p>
+</div>
+<input type="file" id="file" accept="image/*" hidden>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+(() => {
+const $ = s => document.querySelector(s);
+const S = { W:0, H:0, rgba:null, src:null, base:null, labels:null, nLabels:0, boxOfLabel:null,
+  boxes:[], sel:new Set(), resolved:'alpha', bg:[255,255,255], fileBase:'sheet', nextId:1, scale:1, dispW:0, dispH:0 };
+const cfg = { mode:'auto', alpha:128, tol:32, gap:1, min:8, pad:2, absorb:true, isolate:true, removeBg:true, format:'png', prefix:'sprite' };
+
+/* ---------- downloads ---------- */
+function saveFile(filename, blob){
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 8000);
+  toast('Downloading ' + filename);
+}
+
+let toastT;
+function toast(msg){ const t = $('#toast'); t.textContent = msg; t.classList.add('on'); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('on'), 2600); }
+
+/* ---------- loading ---------- */
+const fileInput = $('#file');
+$('#pickBtn').onclick = $('#pickBtn2').onclick = () => fileInput.click();
+fileInput.onchange = () => { if (fileInput.files[0]) loadFile(fileInput.files[0]); fileInput.value = ''; };
+const mat = $('#mat');
+['dragenter','dragover'].forEach(ev => mat.addEventListener(ev, e => { e.preventDefault(); mat.classList.add('drag'); }));
+['dragleave','drop'].forEach(ev => mat.addEventListener(ev, e => { e.preventDefault(); mat.classList.remove('drag'); }));
+mat.addEventListener('drop', e => { const f = [...(e.dataTransfer.files||[])].find(f => f.type.startsWith('image/')); if (f) loadFile(f); });
+window.addEventListener('paste', e => {
+  const it = [...(e.clipboardData?.items||[])].find(i => i.type.startsWith('image/'));
+  if (it) { const f = it.getAsFile(); if (f) loadFile(f); }
+});
+
+function loadFile(file){
+  const url = URL.createObjectURL(file);
+  const img = new Image();
+  img.onload = () => {
+    S.W = img.naturalWidth; S.H = img.naturalHeight;
+    const c = document.createElement('canvas'); c.width = S.W; c.height = S.H;
+    const ctx = c.getContext('2d', { willReadFrequently:true });
+    ctx.drawImage(img, 0, 0);
+    S.src = c; S.rgba = ctx.getImageData(0, 0, S.W, S.H).data;
+    S.fileBase = (file.name || 'sheet').replace(/\.[^.]+$/, '').replace(/[^\w\-]+/g, '_') || 'sheet';
+    URL.revokeObjectURL(url);
+    autoBackground();
+    mat.classList.add('has-img');
+    layoutView();
+    runDetect();
+  };
+  img.onerror = () => { URL.revokeObjectURL(url); toast('That file couldn\u2019t be read as an image'); };
+  img.src = url;
+}
+
+/* ---------- background detection ---------- */
+function autoBackground(){
+  const { W, H, rgba:d } = S;
+  const pts = [];
+  const step = Math.max(1, Math.floor(Math.min(W, H) / 60));
+  for (let x = 0; x < W; x += step) { pts.push(x); pts.push((H-1)*W + x); }
+  for (let y = 0; y < H; y += step) { pts.push(y*W); pts.push(y*W + W - 1); }
+  let clear = 0; const buckets = new Map();
+  for (const p of pts) {
+    const k = p*4;
+    if (d[k+3] < 16) { clear++; continue; }
+    const key = (d[k]>>4)<<8 | (d[k+1]>>4)<<4 | (d[k+2]>>4);
+    const b = buckets.get(key) || [0,0,0,0];
+    b[0]+=d[k]; b[1]+=d[k+1]; b[2]+=d[k+2]; b[3]++; buckets.set(key, b);
+  }
+  let best = null; for (const b of buckets.values()) if (!best || b[3] > best[3]) best = b;
+  if (best) S.bg = [Math.round(best[0]/best[3]), Math.round(best[1]/best[3]), Math.round(best[2]/best[3])];
+  const autoMode = clear / pts.length > 0.5 ? 'alpha' : 'color';
+  S.resolved = cfg.mode === 'auto' ? autoMode : cfg.mode;
+  $('#bgColor').value = '#' + S.bg.map(v => v.toString(16).padStart(2,'0')).join('');
+  syncModeUI(autoMode);
+}
+function syncModeUI(autoMode){
+  const color = S.resolved === 'color';
+  $('#colorRow').hidden = !color;
+  $('#tolField').hidden = !color;
+  $('#alphaField').hidden = color;
+  $('#removeBgRow').hidden = !color;
+  $('#bgNote').textContent = cfg.mode === 'auto' ? 'Detected background color' : 'Background color';
+  if (cfg.mode === 'auto' && autoMode) {
+    const r = document.querySelector('.seg label:first-child');
+    r.lastChild.textContent = autoMode === 'alpha' ? 'Auto: clear' : 'Auto: solid';
+  }
+}
+
+/* ---------- detection ---------- */
+function buildMask(){
+  const { W, H, rgba:d } = S, n = W*H, m = new Uint8Array(n);
+  if (S.resolved === 'alpha') {
+    const t = cfg.alpha;
+    for (let i = 0, k = 3; i < n; i++, k += 4) m[i] = d[k] > t ? 1 : 0;
+  } else {
+    const [r,g,b] = S.bg, t = cfg.tol;
+    for (let i = 0, k = 0; i < n; i++, k += 4) {
+      if (d[k+3] <= 16) continue;
+      const df = Math.max(Math.abs(d[k]-r), Math.abs(d[k+1]-g), Math.abs(d[k+2]-b));
+      m[i] = df > t ? 1 : 0;
+    }
+  }
+  return m;
+}
+function dilate(m, r){
+  if (r <= 0) return m;
+  const { W, H } = S, n = W*H, t = new Uint8Array(n), o = new Uint8Array(n);
+  const pre = new Int32Array(Math.max(W, H) + 1);
+  for (let y = 0; y < H; y++) {
+    const row = y*W;
+    for (let x = 0; x < W; x++) pre[x+1] = pre[x] + m[row+x];
+    for (let x = 0; x < W; x++) { const lo = x - r < 0 ? 0 : x - r, hi = x + r >= W ? W-1 : x + r; t[row+x] = pre[hi+1] - pre[lo] > 0 ? 1 : 0; }
+  }
+  for (let x = 0; x < W; x++) {
+    for (let y = 0; y < H; y++) pre[y+1] = pre[y] + t[y*W+x];
+    for (let y = 0; y < H; y++) { const lo = y - r < 0 ? 0 : y - r, hi = y + r >= H ? H-1 : y + r; o[y*W+x] = pre[hi+1] - pre[lo] > 0 ? 1 : 0; }
+  }
+  return o;
+}
+function label(dm){
+  const { W, H } = S, n = W*H, L = new Int32Array(n), st = new Int32Array(n);
+  let next = 0;
+  for (let i = 0; i < n; i++) {
+    if (!dm[i] || L[i]) continue;
+    next++; L[i] = next; let sp = 0; st[sp++] = i;
+    while (sp) {
+      const p = st[--sp], x = p % W, y = (p - x) / W;
+      const x0 = x > 0 ? -1 : 0, x1 = x < W-1 ? 1 : 0, y0 = y > 0 ? -1 : 0, y1 = y < H-1 ? 1 : 0;
+      for (let dy = y0; dy <= y1; dy++) for (let dx = x0; dx <= x1; dx++) {
+        const q = p + dy*W + dx;
+        if (dm[q] && !L[q]) { L[q] = next; st[sp++] = q; }
+      }
+    }
+  }
+  return { L, next };
+}
+function detect(){
+  const { W } = S;
+  const m = buildMask();
+  const { L, next } = label(dilate(m, cfg.gap));
+  S.labels = L; S.nLabels = next;
+  const minX = new Int32Array(next+1).fill(1e9), minY = new Int32Array(next+1).fill(1e9),
+        maxX = new Int32Array(next+1).fill(-1), maxY = new Int32Array(next+1).fill(-1);
+  for (let i = 0, n = m.length; i < n; i++) {
+    if (!m[i]) continue; const l = L[i]; if (!l) continue;
+    const x = i % W, y = (i - x) / W;
+    if (x < minX[l]) minX[l] = x; if (x > maxX[l]) maxX[l] = x;
+    if (y < minY[l]) minY[l] = y; if (y > maxY[l]) maxY[l] = y;
+  }
+  let cands = [];
+  for (let l = 1; l <= next; l++) if (maxX[l] >= 0)
+    cands.push({ x0:minX[l], y0:minY[l], x1:maxX[l]+1, y1:maxY[l]+1, labels:[l], manual:false });
+  cands.sort((a,b) => area(b) - area(a));
+  const kept = [];
+  for (const c of cands) {
+    if (cfg.absorb) {
+      const host = kept.find(k => k.x0 <= c.x0 && k.y0 <= c.y0 && k.x1 >= c.x1 && k.y1 >= c.y1);
+      if (host) { host.labels.push(...c.labels); continue; }
+    }
+    if (c.x1 - c.x0 >= cfg.min && c.y1 - c.y0 >= cfg.min) kept.push(c);
+  }
+  S.boxes = readingOrder(kept).map(b => ({ ...b, id:S.nextId++, name:'' }));
+  S.sel.clear();
+  rebuildOwners();
+}
+const area = b => (b.x1-b.x0)*(b.y1-b.y0);
+function readingOrder(boxes){
+  const bs = boxes.slice().sort((a,b) => a.y0 - b.y0), rows = [];
+  for (const b of bs) {
+    const row = rows[rows.length-1];
+    if (row && b.y0 < row.ref) row.items.push(b);
+    else rows.push({ ref:(b.y0 + b.y1)/2, items:[b] });
+  }
+  return rows.flatMap(r => r.items.sort((a,b) => a.x0 - b.x0));
+}
+function rebuildOwners(){
+  const o = new Int32Array(S.nLabels + 1);
+  for (const b of S.boxes) if (!b.manual) for (const l of b.labels) o[l] = b.id;
+  S.boxOfLabel = o;
+}
+
+let detectT;
+function runDetect(){
+  if (!S.rgba) return;
+  $('#busy').classList.add('on');
+  clearTimeout(detectT);
+  detectT = setTimeout(() => {
+    requestAnimationFrame(() => setTimeout(() => {
+      detect(); drawView(); renderPieces();
+      $('#busy').classList.remove('on');
+    }, 0));
+  }, 120);
+}
+
+/* ---------- cropping ---------- */
+function cropRect(b){
+  const p = cfg.pad;
+  const x0 = Math.max(0, b.x0 - p), y0 = Math.max(0, b.y0 - p);
+  const x1 = Math.min(S.W, b.x1 + p), y1 = Math.min(S.H, b.y1 + p);
+  return { x:x0, y:y0, w:x1-x0, h:y1-y0 };
+}
+function cropCanvas(b){
+  const r = cropRect(b), c = document.createElement('canvas'); c.width = r.w; c.height = r.h;
+  const ctx = c.getContext('2d');
+  const id = S.src.getContext('2d').getImageData(r.x, r.y, r.w, r.h), d = id.data;
+  if (cfg.isolate && !b.manual) {
+    const L = S.labels, O = S.boxOfLabel, W = S.W;
+    for (let yy = 0; yy < r.h; yy++) {
+      const row = (r.y + yy) * W + r.x;
+      for (let xx = 0; xx < r.w; xx++) {
+        const l = L[row + xx];
+        if (l) { const o = O[l]; if (o && o !== b.id) d[(yy*r.w + xx)*4 + 3] = 0; }
+      }
+    }
+  }
+  if (S.resolved === 'color' && cfg.removeBg) clearBg(d, r.w, r.h);
+  ctx.putImageData(id, 0, 0);
+  return c;
+}
+function clearBg(d, w, h){
+  const [r,g,b] = S.bg, t = cfg.tol, seen = new Uint8Array(w*h), st = new Int32Array(w*h); let sp = 0;
+  const isBg = i => { const k = i*4; return d[k+3] <= 16 || Math.max(Math.abs(d[k]-r), Math.abs(d[k+1]-g), Math.abs(d[k+2]-b)) <= t; };
+  const push = i => { if (!seen[i] && isBg(i)) { seen[i] = 1; st[sp++] = i; } };
+  for (let x = 0; x < w; x++) { push(x); push((h-1)*w + x); }
+  for (let y = 0; y < h; y++) { push(y*w); push(y*w + w - 1); }
+  while (sp) {
+    const p = st[--sp]; d[p*4+3] = 0;
+    const x = p % w, y = (p - x) / w;
+    if (x > 0) push(p-1); if (x < w-1) push(p+1); if (y > 0) push(p-w); if (y < h-1) push(p+w);
+  }
+}
+function toBlob(c){
+  const type = cfg.format === 'webp' ? 'image/webp' : 'image/png';
+  return new Promise(res => c.toBlob(res, type, 0.95));
+}
+
+/* ---------- names ---------- */
+function names(){
+  const used = new Map(), out = [];
+  const pad = String(S.boxes.length).length < 2 ? 2 : String(S.boxes.length).length;
+  S.boxes.forEach((b, i) => {
+    let base = (b.name || `${cfg.prefix || 'sprite'}_${String(i+1).padStart(pad,'0')}`).trim().replace(/[^\w\-]+/g, '_') || `sprite_${i+1}`;
+    let n = base, k = 2; while (used.has(n.toLowerCase())) n = `${base}_${k++}`;
+    used.set(n.toLowerCase(), 1); out.push(n);
+  });
+  return out;
+}
+
+/* ---------- view ---------- */
+const view = $('#view'), vctx = view.getContext('2d');
+function layoutView(){
+  if (!S.src) return;
+  const dpr = window.devicePixelRatio || 1;
+  const cw = mat.clientWidth - 32, maxH = Math.max(280, window.innerHeight * 0.68);
+  const sc = Math.min(cw / S.W, maxH / S.H, 3);
+  S.scale = sc; S.dispW = Math.round(S.W * sc); S.dispH = Math.round(S.H * sc);
+  view.style.width = S.dispW + 'px'; view.style.height = S.dispH + 'px';
+  view.width = Math.round(S.dispW * dpr); view.height = Math.round(S.dispH * dpr);
+  const b = document.createElement('canvas'); b.width = view.width; b.height = view.height;
+  const bctx = b.getContext('2d'); bctx.imageSmoothingQuality = 'high';
+  bctx.drawImage(S.src, 0, 0, b.width, b.height);
+  S.base = b;
+  drawView();
+}
+function drawView(temp){
+  if (!S.base) return;
+  const dpr = view.width / S.dispW, sc = S.scale * dpr;
+  vctx.setTransform(1,0,0,1,0,0);
+  vctx.clearRect(0, 0, view.width, view.height);
+  vctx.drawImage(S.base, 0, 0);
+  const blade = getComputedStyle(document.documentElement).getPropertyValue('--blade').trim() || '#FFC21A';
+  vctx.font = `800 ${11*dpr}px "Bricolage Grotesque", system-ui, sans-serif`;
+  vctx.textBaseline = 'top';
+  S.boxes.forEach((b, i) => {
+    const x = b.x0*sc, y = b.y0*sc, w = (b.x1-b.x0)*sc, h = (b.y1-b.y0)*sc;
+    const on = S.sel.has(b.id);
+    if (on) { vctx.fillStyle = 'rgba(255,194,26,.28)'; vctx.fillRect(x, y, w, h); }
+    vctx.lineWidth = (on ? 2.5 : 1.5) * dpr;
+    vctx.setLineDash(on ? [] : [5*dpr, 4*dpr]);
+    vctx.strokeStyle = blade;
+    vctx.strokeRect(x + .5, y + .5, w, h);
+    if (S.scale < 0.3 || w < 26*dpr || h < 20*dpr) return;
+    const label = String(i+1), tw = vctx.measureText(label).width + 8*dpr, th = 15*dpr;
+    vctx.fillStyle = blade; vctx.fillRect(x, y, tw, th);
+    vctx.fillStyle = '#2B2200'; vctx.fillText(label, x + 4*dpr, y + 2*dpr);
+  });
+  vctx.setLineDash([]);
+  if (temp) {
+    vctx.strokeStyle = '#fff'; vctx.lineWidth = 2*dpr; vctx.setLineDash([6*dpr, 4*dpr]);
+    vctx.strokeRect(temp.x0*sc, temp.y0*sc, (temp.x1-temp.x0)*sc, (temp.y1-temp.y0)*sc);
+    vctx.setLineDash([]);
+  }
+}
+window.addEventListener('resize', () => { clearTimeout(window.__rz); window.__rz = setTimeout(layoutView, 120); });
+
+/* pointer: click to select, drag to draw */
+let drag = null;
+function toImg(e){ const r = view.getBoundingClientRect(); return { x:(e.clientX - r.left) / S.scale, y:(e.clientY - r.top) / S.scale, sx:e.clientX, sy:e.clientY }; }
+function hit(p){
+  let best = null;
+  for (const b of S.boxes) if (p.x >= b.x0 && p.x <= b.x1 && p.y >= b.y0 && p.y <= b.y1) if (!best || area(b) < area(best)) best = b;
+  return best;
+}
+view.addEventListener('pointerdown', e => { if (!S.src) return; view.setPointerCapture(e.pointerId); drag = { start:toImg(e), moved:false }; });
+view.addEventListener('pointermove', e => {
+  if (!drag) return;
+  const p = toImg(e);
+  if (!drag.moved && Math.hypot(p.sx - drag.start.sx, p.sy - drag.start.sy) > 6) drag.moved = true;
+  if (drag.moved) { drag.rect = normRect(drag.start, p); drawView(drag.rect); }
+});
+view.addEventListener('pointerup', () => {
+  if (!drag) return;
+  const d = drag; drag = null;
+  if (d.moved && d.rect && d.rect.x1 - d.rect.x0 >= 2 && d.rect.y1 - d.rect.y0 >= 2) {
+    const b = { ...d.rect, labels:[], manual:true, id:S.nextId++, name:'' };
+    S.boxes.push(b); S.sel.clear(); S.sel.add(b.id);
+    drawView(); renderPieces(); toast('Added piece ' + S.boxes.length);
+    return;
+  }
+  const b = hit(d.start);
+  if (b) { S.sel.has(b.id) ? S.sel.delete(b.id) : S.sel.add(b.id); }
+  else S.sel.clear();
+  drawView(); syncSelection();
+});
+view.addEventListener('pointercancel', () => { drag = null; drawView(); });
+function normRect(a, b){
+  const c = v => Math.round(v);
+  return { x0:c(Math.max(0, Math.min(a.x, b.x))), y0:c(Math.max(0, Math.min(a.y, b.y))), x1:c(Math.min(S.W, Math.max(a.x, b.x))), y1:c(Math.min(S.H, Math.max(a.y, b.y))) };
+}
+
+/* ---------- pieces grid ---------- */
+function renderPieces(){
+  const grid = $('#grid'); grid.textContent = '';
+  const nm = names();
+  S.boxes.forEach((b, i) => {
+    const c = cropCanvas(b), r = cropRect(b);
+    const card = document.createElement('div'); card.className = 'card'; card.dataset.id = b.id;
+    const th = document.createElement('button'); th.type = 'button'; th.className = 'thumb';
+    th.setAttribute('aria-label', 'Select piece ' + (i+1));
+    const img = document.createElement('img'); img.src = c.toDataURL(); img.alt = nm[i]; img.loading = 'lazy';
+    const num = document.createElement('span'); num.className = 'num'; num.textContent = i + 1;
+    th.append(img, num);
+    th.onclick = () => { S.sel.has(b.id) ? S.sel.delete(b.id) : S.sel.add(b.id); drawView(); syncSelection(); };
+    const name = document.createElement('input'); name.className = 'name'; name.value = nm[i]; name.spellcheck = false;
+    name.setAttribute('aria-label', 'Name for piece ' + (i+1));
+    name.onchange = () => { b.name = name.value.trim(); const fresh = names(); name.value = fresh[S.boxes.indexOf(b)]; };
+    const meta = document.createElement('div'); meta.className = 'meta';
+    const sz = document.createElement('span'); sz.textContent = `${r.w}\u00d7${r.h}`;
+    const sv = document.createElement('button'); sv.type = 'button'; sv.textContent = 'Save';
+    sv.onclick = async () => { const n = names()[S.boxes.indexOf(b)]; saveFile(`${n}.${cfg.format}`, await toBlob(cropCanvas(b))); };
+    meta.append(sz, sv);
+    card.append(th, name, meta);
+    grid.append(card);
+  });
+  $('#count').textContent = S.boxes.length ? `(${S.boxes.length})` : '';
+  $('#nopieces').hidden = S.boxes.length > 0;
+  $('#nopieces').textContent = S.src ? 'No pieces found. Try lowering edge strictness or the minimum size.' : 'Cut pieces show up here.';
+  $('#zipBtn').disabled = !S.boxes.length;
+  $('#zipBtn').textContent = S.boxes.length ? `Download ZIP (${S.boxes.length})` : 'Download ZIP';
+  syncSelection();
+}
+function syncSelection(){
+  document.querySelectorAll('.card').forEach(c => c.classList.toggle('sel', S.sel.has(+c.dataset.id)));
+  const n = S.sel.size;
+  $('#selbar').hidden = n === 0;
+  $('#selCount').textContent = `${n} selected`;
+  $('#mergeBtn').disabled = n < 2;
+}
+function mergeSelected(){
+  const picked = S.boxes.filter(b => S.sel.has(b.id));
+  if (picked.length < 2) return;
+  const m = { x0:Math.min(...picked.map(b => b.x0)), y0:Math.min(...picked.map(b => b.y0)),
+    x1:Math.max(...picked.map(b => b.x1)), y1:Math.max(...picked.map(b => b.y1)),
+    labels:picked.flatMap(b => b.labels), manual:picked.every(b => b.manual), id:S.nextId++, name:picked[0].name };
+  const at = S.boxes.indexOf(picked[0]);
+  S.boxes = S.boxes.filter(b => !S.sel.has(b.id));
+  S.boxes.splice(Math.min(at, S.boxes.length), 0, m);
+  S.sel.clear(); S.sel.add(m.id);
+  rebuildOwners(); drawView(); renderPieces();
+  toast(`Merged ${picked.length} pieces`);
+}
+function deleteSelected(){
+  const n = S.sel.size; if (!n) return;
+  S.boxes = S.boxes.filter(b => !S.sel.has(b.id));
+  S.sel.clear(); rebuildOwners(); drawView(); renderPieces();
+  toast(`Deleted ${n} piece${n > 1 ? 's' : ''}`);
+}
+$('#mergeBtn').onclick = mergeSelected;
+$('#delBtn').onclick = deleteSelected;
+$('#clearSel').onclick = () => { S.sel.clear(); drawView(); syncSelection(); };
+window.addEventListener('keydown', e => {
+  const tag = (e.target.tagName || '').toLowerCase();
+  if (tag === 'input' || tag === 'select' || tag === 'textarea') return;
+  if ((e.key === 'Delete' || e.key === 'Backspace') && S.sel.size) { e.preventDefault(); deleteSelected(); }
+  if (e.key === 'Escape' && S.sel.size) { S.sel.clear(); drawView(); syncSelection(); }
+  if ((e.key === 'm' || e.key === 'M') && S.sel.size > 1) mergeSelected();
+});
+
+/* ---------- zip ---------- */
+$('#zipBtn').onclick = async () => {
+  if (!S.boxes.length) return;
+  if (!window.JSZip) { toast('Zip library didn\u2019t load. Check your connection and reload.'); return; }
+  const btn = $('#zipBtn'); btn.disabled = true;
+  try {
+    const zip = new JSZip(), nm = names(), folder = zip.folder(S.fileBase), ext = cfg.format;
+    const manifest = { source: S.fileBase, width:S.W, height:S.H, sprites:[] };
+    for (let i = 0; i < S.boxes.length; i++) {
+      btn.textContent = `Packing ${i+1}/${S.boxes.length}`;
+      const b = S.boxes[i], r = cropRect(b);
+      folder.file(`${nm[i]}.${ext}`, await toBlob(cropCanvas(b)));
+      manifest.sprites.push({ name:nm[i], file:`${nm[i]}.${ext}`, x:r.x, y:r.y, w:r.w, h:r.h });
+    }
+    folder.file('sprites.json', JSON.stringify(manifest, null, 2));
+    btn.textContent = 'Zipping…';
+    const blob = await zip.generateAsync({ type:'blob', compression:'DEFLATE', compressionOptions:{ level:6 } });
+    await saveFile(`${S.fileBase}_sprites.zip`, blob);
+  } catch (err) {
+    toast('Couldn\u2019t build the zip: ' + (err && err.message || 'unknown error'));
+  } finally {
+    btn.disabled = false; btn.textContent = `Download ZIP (${S.boxes.length})`;
+  }
+};
+
+/* ---------- settings wiring ---------- */
+function bindRange(id, key, unit, redetect){
+  const el = $('#' + id), out = $('#' + id + 'Out');
+  el.addEventListener('input', () => {
+    cfg[key] = +el.value; out.textContent = el.value + (unit || '');
+    if (redetect) runDetect(); else { clearTimeout(el.__t); el.__t = setTimeout(renderPieces, 150); }
+  });
+}
+bindRange('alpha', 'alpha', '', true);
+bindRange('tol', 'tol', '', true);
+bindRange('gap', 'gap', ' px', true);
+bindRange('min', 'min', ' px', true);
+bindRange('pad', 'pad', ' px', false);
+document.querySelectorAll('input[name=bgmode]').forEach(r => r.addEventListener('change', () => {
+  cfg.mode = r.value;
+  const first = document.querySelector('.seg label:first-child'); first.lastChild.textContent = 'Auto';
+  if (S.rgba) { autoBackground(); runDetect(); } else syncModeUI();
+}));
+$('#bgColor').addEventListener('input', e => {
+  const h = e.target.value; S.bg = [1,3,5].map(i => parseInt(h.slice(i, i+2), 16));
+  runDetect();
+});
+$('#absorb').onchange = e => { cfg.absorb = e.target.checked; runDetect(); };
+$('#isolate').onchange = e => { cfg.isolate = e.target.checked; renderPieces(); };
+$('#removeBg').onchange = e => { cfg.removeBg = e.target.checked; renderPieces(); };
+$('#format').onchange = e => { cfg.format = e.target.value; };
+$('#prefix').addEventListener('input', e => { cfg.prefix = e.target.value; clearTimeout(e.target.__t); e.target.__t = setTimeout(renderPieces, 250); });
+})();
+</script>
+</body>
+</html>
