@@ -194,6 +194,7 @@ hr{border:0;border-top:1px solid var(--line);margin:4px 0 16px}
           <select id="format"><option value="png">PNG</option><option value="webp">WebP</option></select>
         </div>
       </div>
+      <small style="display:block;color:var(--muted);font-size:12.5px;margin:-6px 0 8px">Unnamed pieces get a new random name on every export, and names are never reused.</small>
       <small style="color:var(--muted);font-size:12.5px">Changing strictness, gap, or size re-cuts the sheet and resets manual edits.</small>
     </aside>
   </div>
@@ -449,14 +450,28 @@ function toBlob(c){
 }
 
 /* ---------- names ---------- */
-function names(){
-  const used = new Map(), out = [];
-  const pad = String(S.boxes.length).length < 2 ? 2 : String(S.boxes.length).length;
-  S.boxes.forEach((b, i) => {
-    let base = (b.name || `${cfg.prefix || 'sprite'}_${String(i+1).padStart(pad,'0')}`).trim().replace(/[^\w\-]+/g, '_') || `sprite_${i+1}`;
-    let n = base, k = 2; while (used.has(n.toLowerCase())) n = `${base}_${k++}`;
-    used.set(n.toLowerCase(), 1); out.push(n);
+// Pieces without a custom name get a fresh random name on every export.
+// Names already handed out are remembered (this session + localStorage) so none come back.
+const USED_KEY = 'spriteCutter.usedNames';
+const usedNames = (() => { try { return new Set(JSON.parse(localStorage.getItem(USED_KEY) || '[]')); } catch { return new Set(); } })();
+const cleanName = s => (s || '').trim().replace(/[^\w\-]+/g, '_').replace(/^_+|_+$/g, '');
+const prefixPart = () => { const p = cleanName(cfg.prefix); return p ? p + '_' : ''; };
+function randId(n = 8){
+  const abc = 'abcdefghijklmnopqrstuvwxyz0123456789', out = [];
+  while (out.length < n) for (const v of crypto.getRandomValues(new Uint8Array(n))) if (v < 252 && out.length < n) out.push(abc[v % 36]);
+  return out.join('');
+}
+function exportNames(boxes){
+  const taken = new Set(), fresh = [];
+  const out = boxes.map(b => {
+    let n;
+    if (b.name) { n = b.name; for (let k = 2; taken.has(n.toLowerCase()); k++) n = `${b.name}_${k}`; }
+    else { do n = prefixPart() + randId(); while (taken.has(n.toLowerCase()) || usedNames.has(n.toLowerCase())); fresh.push(n); }
+    taken.add(n.toLowerCase());
+    return n;
   });
+  fresh.forEach(n => usedNames.add(n.toLowerCase()));
+  try { localStorage.setItem(USED_KEY, JSON.stringify([...usedNames].slice(-50000))); } catch {}
   return out;
 }
 
@@ -545,23 +560,23 @@ function normRect(a, b){
 /* ---------- pieces grid ---------- */
 function renderPieces(){
   const grid = $('#grid'); grid.textContent = '';
-  const nm = names();
   S.boxes.forEach((b, i) => {
     const c = cropCanvas(b), r = cropRect(b);
     const card = document.createElement('div'); card.className = 'card'; card.dataset.id = b.id;
     const th = document.createElement('button'); th.type = 'button'; th.className = 'thumb';
     th.setAttribute('aria-label', 'Select piece ' + (i+1));
-    const img = document.createElement('img'); img.src = c.toDataURL(); img.alt = nm[i]; img.loading = 'lazy';
+    const img = document.createElement('img'); img.src = c.toDataURL(); img.alt = b.name || 'Piece ' + (i+1); img.loading = 'lazy';
     const num = document.createElement('span'); num.className = 'num'; num.textContent = i + 1;
     th.append(img, num);
     th.onclick = () => { S.sel.has(b.id) ? S.sel.delete(b.id) : S.sel.add(b.id); drawView(); syncSelection(); };
-    const name = document.createElement('input'); name.className = 'name'; name.value = nm[i]; name.spellcheck = false;
-    name.setAttribute('aria-label', 'Name for piece ' + (i+1));
-    name.onchange = () => { b.name = name.value.trim(); const fresh = names(); name.value = fresh[S.boxes.indexOf(b)]; };
+    const name = document.createElement('input'); name.className = 'name'; name.value = b.name; name.spellcheck = false;
+    name.placeholder = prefixPart() + '•'.repeat(8);
+    name.setAttribute('aria-label', 'Name for piece ' + (i+1) + ' (leave empty for a random name)');
+    name.onchange = () => { b.name = cleanName(name.value); name.value = b.name; };
     const meta = document.createElement('div'); meta.className = 'meta';
     const sz = document.createElement('span'); sz.textContent = `${r.w}\u00d7${r.h}`;
     const sv = document.createElement('button'); sv.type = 'button'; sv.textContent = 'Save';
-    sv.onclick = async () => { const n = names()[S.boxes.indexOf(b)]; saveFile(`${n}.${cfg.format}`, await toBlob(cropCanvas(b))); };
+    sv.onclick = async () => { const n = exportNames([b])[0]; saveFile(`${n}.${cfg.format}`, await toBlob(cropCanvas(b))); };
     meta.append(sz, sv);
     card.append(th, name, meta);
     grid.append(card);
@@ -616,7 +631,7 @@ $('#zipBtn').onclick = async () => {
   if (!window.JSZip) { toast('Zip library didn\u2019t load. Check your connection and reload.'); return; }
   const btn = $('#zipBtn'); btn.disabled = true;
   try {
-    const zip = new JSZip(), nm = names(), folder = zip.folder(S.fileBase), ext = cfg.format;
+    const zip = new JSZip(), nm = exportNames(S.boxes), folder = zip.folder(S.fileBase), ext = cfg.format;
     const manifest = { source: S.fileBase, width:S.W, height:S.H, sprites:[] };
     for (let i = 0; i < S.boxes.length; i++) {
       btn.textContent = `Packing ${i+1}/${S.boxes.length}`;
@@ -661,7 +676,10 @@ $('#absorb').onchange = e => { cfg.absorb = e.target.checked; runDetect(); };
 $('#isolate').onchange = e => { cfg.isolate = e.target.checked; renderPieces(); };
 $('#removeBg').onchange = e => { cfg.removeBg = e.target.checked; renderPieces(); };
 $('#format').onchange = e => { cfg.format = e.target.value; };
-$('#prefix').addEventListener('input', e => { cfg.prefix = e.target.value; clearTimeout(e.target.__t); e.target.__t = setTimeout(renderPieces, 250); });
+$('#prefix').addEventListener('input', e => {
+  cfg.prefix = e.target.value;
+  document.querySelectorAll('.card .name').forEach(n => n.placeholder = prefixPart() + '•'.repeat(8));
+});
 })();
 </script>
 </body>
